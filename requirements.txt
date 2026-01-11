@@ -1,0 +1,5 @@
+# Dependencias de Observer
+pynput>=1.7.6      # Detección de teclado y mouse
+plyer>=2.1.0       # Notificaciones del sistema
+pystray>=0.19.4    # Icono en system tray
+Pillow>=9.0.0      # Creación de imagen para el icono
