@@ -43,6 +43,46 @@ class ConfigWindow:
         self.window.geometry("450x420")
         self.window.resizable(False, False)
         
+        # Configurar encoding UTF-8 para soporte de íconos/emojis modernos
+        try:
+            self.window.tk.call('encoding', 'system', 'utf-8')
+        except:
+            pass
+        
+        # Establecer el ícono personalizado para la ventana
+        try:
+            if ICON_PATH.exists():
+                # Método principal para Windows
+                self.window.iconbitmap(str(ICON_PATH))
+        except Exception as e:
+            # Método alternativo usando PIL
+            try:
+                if ICON_PATH.exists():
+                    from PIL import Image, ImageTk
+                    icon_image = Image.open(ICON_PATH)
+                    icon_image = icon_image.resize((32, 32), Image.Resampling.LANCZOS)
+                    icon_photo = ImageTk.PhotoImage(icon_image)
+                    self.window.iconphoto(True, icon_photo)
+                    # Mantener referencia para evitar garbage collection
+                    self.window._icon_photo = icon_photo
+            except Exception as e2:
+                pass
+        
+        # Configurar para que Windows trate esta ventana como aplicación independiente
+        try:
+            import ctypes
+            # Establecer un AppUserModelID único para separar de Python
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Observer.Config.1.0")
+        except Exception as e:
+            pass
+        
+        # También intentar con wm_iconbitmap como alternativa
+        try:
+            if ICON_PATH.exists():
+                self.window.wm_iconbitmap(str(ICON_PATH))
+        except Exception as e:
+            pass
+        
         # Centrar ventana
         self.window.update_idletasks()
         x = (self.window.winfo_screenwidth() - 450) // 2
@@ -68,7 +108,7 @@ class ConfigWindow:
         # Título
         title_label = tk.Label(
             main_frame,
-            text="⚙️ Configuración",
+            text="🔩 Configuración",
             font=("Segoe UI", 14, "bold")
         )
         title_label.pack(pady=(0, 15))
@@ -108,14 +148,32 @@ class ConfigWindow:
         # Mensaje de descanso
         tk.Label(msg_frame, text="🔔 Aviso de descanso:").pack(anchor=tk.W)
         self.msg_rest_var = tk.StringVar(value=self.config.msg_rest)
-        msg_rest_entry = tk.Entry(msg_frame, textvariable=self.msg_rest_var, width=50)
+        msg_rest_entry = tk.Entry(
+            msg_frame, 
+            textvariable=self.msg_rest_var, 
+            width=50, 
+            font=("Segoe UI", 10),
+            justify='left'
+        )
         msg_rest_entry.pack(fill=tk.X, pady=(0, 10))
+        
+        # Configurar bindings mejorados
+        self._setup_enhanced_entry_bindings(msg_rest_entry)
         
         # Mensaje de trabajo
         tk.Label(msg_frame, text="💻 Aviso de trabajo:").pack(anchor=tk.W)
         self.msg_work_var = tk.StringVar(value=self.config.msg_work)
-        msg_work_entry = tk.Entry(msg_frame, textvariable=self.msg_work_var, width=50)
+        msg_work_entry = tk.Entry(
+            msg_frame, 
+            textvariable=self.msg_work_var, 
+            width=50, 
+            font=("Segoe UI", 10),
+            justify='left'
+        )
         msg_work_entry.pack(fill=tk.X)
+        
+        # Configurar bindings mejorados
+        self._setup_enhanced_entry_bindings(msg_work_entry)
         
         # Botones
         btn_frame = tk.Frame(main_frame)
@@ -129,6 +187,108 @@ class ConfigWindow:
         
         # Manejar cierre de ventana
         window.protocol("WM_DELETE_WINDOW", self._cancel)
+    
+    def _setup_enhanced_entry_bindings(self, entry):
+        """Configura bindings mejorados para Entry con soporte completo de Unicode."""
+        
+        # Configurar el Entry para usar UTF-8 y deshabilitar validaciones restrictivas
+        try:
+            entry.configure(validate='none')
+            # Configurar fuente que soporte emojis
+            entry.configure(font=("Segoe UI", 10))
+        except:
+            pass
+        
+        # Habilitar Ctrl+A para seleccionar todo
+        def select_all(event):
+            entry.select_range(0, tk.END)
+            entry.icursor(tk.END)
+            return "break"
+        
+        entry.bind('<Control-a>', select_all)
+        entry.bind('<Control-A>', select_all)
+        
+        # Mejorar Ctrl+Backspace para borrar palabra completa
+        def delete_word_left(event):
+            try:
+                cursor_pos = entry.index(tk.INSERT)
+                text = entry.get()
+                
+                if cursor_pos == 0:
+                    return "break"
+                
+                # Encontrar el inicio de la palabra actual
+                start_pos = cursor_pos - 1
+                while start_pos > 0 and text[start_pos].isspace():
+                    start_pos -= 1
+                while start_pos > 0 and not text[start_pos - 1].isspace():
+                    start_pos -= 1
+                
+                # Borrar desde start_pos hasta cursor_pos
+                entry.delete(start_pos, cursor_pos)
+                return "break"
+            except:
+                return "break"
+        
+        entry.bind('<Control-BackSpace>', delete_word_left)
+        
+        # Mejorar Ctrl+Delete para borrar palabra hacia adelante
+        def delete_word_right(event):
+            try:
+                cursor_pos = entry.index(tk.INSERT)
+                text = entry.get()
+                
+                if cursor_pos >= len(text):
+                    return "break"
+                
+                # Encontrar el final de la palabra actual
+                end_pos = cursor_pos
+                while end_pos < len(text) and text[end_pos].isspace():
+                    end_pos += 1
+                while end_pos < len(text) and not text[end_pos].isspace():
+                    end_pos += 1
+                
+                # Borrar desde cursor_pos hasta end_pos
+                entry.delete(cursor_pos, end_pos)
+                return "break"
+            except:
+                return "break"
+        
+        entry.bind('<Control-Delete>', delete_word_right)
+        
+        # Mejorar el pegado para manejar emojis correctamente
+        def enhanced_paste(event):
+            try:
+                # Obtener contenido del clipboard
+                clipboard_content = entry.tk.clipboard_get()
+                
+                # Insertar en la posición actual del cursor
+                cursor_pos = entry.index(tk.INSERT)
+                entry.insert(cursor_pos, clipboard_content)
+                
+                return "break"
+            except tk.TclError:
+                # No hay nada en el clipboard o error
+                pass
+            except Exception as e:
+                print(f"[Config] Error en pegado: {e}")
+            
+            return None  # Permitir comportamiento por defecto si falla
+        
+        entry.bind('<Control-v>', enhanced_paste)
+        entry.bind('<Control-V>', enhanced_paste)
+        
+        # Configurar el widget para aceptar caracteres Unicode
+        def validate_unicode(event):
+            # No validar nada, permitir todos los caracteres Unicode
+            return True
+        
+        # Configurar para que acepte entrada directa de emojis
+        try:
+            # Deshabilitar cualquier validación que pueda interferir
+            entry.configure(validate='none', validatecommand=None)
+        except:
+            pass
     
     def _save(self):
         """Guarda la configuración y cierra."""

@@ -32,6 +32,12 @@ class Observer:
         # Tiempo de pausa acumulado para detectar descanso automático
         self.pause_elapsed = 0
         
+        # Tiempo de inactividad durante el descanso
+        self.rest_inactivity_elapsed = 0
+        
+        # Flag para rastrear si el usuario está actualmente inactivo
+        self.is_currently_inactive = False
+        
         # Componentes
         self.notifications = NotificationManager()
         self.activity_monitor = ActivityMonitor(
@@ -73,6 +79,7 @@ class Observer:
         print("[Observer] Deteniendo aplicación...")
         self.running = False
         self.activity_monitor.stop()
+        self.notifications.cleanup()  # Limpiar recursos de audio
         if self.tray:
             self.tray.stop()
     
@@ -86,7 +93,25 @@ class Observer:
             self.work_elapsed = 0
             self.rest_elapsed = 0
             self.pause_elapsed = 0
+            self.rest_inactivity_elapsed = 0
+            self.is_currently_inactive = False
         print(f"[Config] Configuración actualizada: {new_config}")
+        
+        # Forzar detección de actividad después de un breve delay
+        # para que si el usuario está activo, inicie el ciclo automáticamente
+        def force_activity_check():
+            import time
+            time.sleep(0.5)  # Esperar medio segundo
+            # Simular actividad para forzar transición si el usuario está activo
+            if self.activity_monitor and hasattr(self.activity_monitor, 'last_activity_time'):
+                import time
+                current_time = time.time()
+                # Si hubo actividad reciente (últimos 5 segundos), forzar transición
+                if current_time - self.activity_monitor.last_activity_time < 5.0:
+                    self._on_activity()
+        
+        # Ejecutar en hilo separado para no bloquear
+        threading.Thread(target=force_activity_check, daemon=True).start()
     
     def _get_state_info(self) -> dict:
         """Retorna información del estado actual para mostrar en UI."""
@@ -104,6 +129,9 @@ class Observer:
     def _on_activity(self):
         """Callback cuando se detecta actividad del usuario."""
         with self.state_lock:
+            self.is_currently_inactive = False
+            self.rest_inactivity_elapsed = 0  # Resetear contador de inactividad durante descanso
+            
             if self.state == self.STATE_IDLE:
                 # Iniciar ciclo de trabajo
                 self.state = self.STATE_WORKING
@@ -116,16 +144,25 @@ class Observer:
                 self.pause_elapsed = 0  # Resetear contador de pausa
                 print(f"[Estado] PAUSED -> WORKING (reanudando, {self.work_elapsed}s acumulados)")
             
+            elif self.state == self.STATE_WAIT_REST:
+                # El usuario siguió activo después de la notificación - reiniciar ciclo
+                self.state = self.STATE_WORKING
+                self.work_elapsed = 0
+                print("[Estado] WAIT_REST -> WORKING (usuario ignoró descanso, reiniciando ciclo)")
+            
             elif self.state == self.STATE_RESTING:
                 # El usuario volvió durante el descanso - reiniciar ciclo de trabajo
                 self.state = self.STATE_WORKING
                 self.work_elapsed = 0
                 self.rest_elapsed = 0
+                self.rest_inactivity_elapsed = 0
                 print("[Estado] RESTING -> WORKING (usuario volvió, reiniciando ciclo)")
     
     def _on_inactivity(self):
         """Callback cuando se detecta inactividad del usuario."""
         with self.state_lock:
+            self.is_currently_inactive = True
+            
             if self.state == self.STATE_WORKING:
                 # Pausar trabajo
                 self.state = self.STATE_WORK_PAUSED
@@ -136,6 +173,7 @@ class Observer:
                 # ¡El usuario se levantó! Iniciar descanso
                 self.state = self.STATE_RESTING
                 self.rest_elapsed = 0
+                self.rest_inactivity_elapsed = 0
                 print("[Estado] WAIT_REST -> RESTING (descanso iniciado)")
     
     def _main_loop(self):
@@ -163,7 +201,7 @@ class Observer:
                         # Tiempo de trabajo completado
                         self.state = self.STATE_WAIT_REST
                         self.work_elapsed = 0  # Resetear para evitar notificaciones duplicadas
-                        self.notifications.notify(
+                        self.notifications.notify_rest(
                             title="¡Hora de descansar!",
                             message=self.config.msg_rest
                         )
@@ -175,26 +213,40 @@ class Observer:
                     auto_rest_threshold = self.config.auto_rest_minutes * 60
                     
                     if self.pause_elapsed >= auto_rest_threshold:
-                        # Pausa larga = descanso automático, reiniciar ciclo
-                        self.state = self.STATE_IDLE
+                        # Pausa larga = iniciar descanso automático
+                        self.state = self.STATE_RESTING
                         self.work_elapsed = 0
                         self.pause_elapsed = 0
-                        print(f"[Estado] PAUSED -> IDLE (descanso automático tras {int(self.pause_elapsed)}s)")
+                        self.rest_elapsed = 0
+                        self.notifications.notify_auto_rest(
+                            title="Descanso automático",
+                            message="Has estado inactivo. Iniciando descanso automático."
+                        )
+                        print(f"[Estado] PAUSED -> RESTING (descanso automático tras {int(self.pause_elapsed)}s)")
                 
                 elif self.state == self.STATE_RESTING:
                     self.rest_elapsed += delta
+                    
+                    # Si el usuario está inactivo durante el descanso, contar tiempo de inactividad
+                    if self.is_currently_inactive:
+                        self.rest_inactivity_elapsed += delta
+                    
                     rest_target = self.config.rest_minutes * 60
                     
                     if self.rest_elapsed >= rest_target:
-                        # Descanso completado
+                        # Descanso completado - siempre notificar
                         self.state = self.STATE_IDLE
                         self.work_elapsed = 0
                         self.rest_elapsed = 0
-                        self.notifications.notify(
+                        self.rest_inactivity_elapsed = 0
+                        self.notifications.notify_work(
                             title="¡Descanso terminado!",
                             message=self.config.msg_work
                         )
-                        print("[Estado] RESTING -> IDLE (ciclo completado)")
+                        if self.is_currently_inactive:
+                            print("[Estado] RESTING -> IDLE (descanso completado, usuario inactivo)")
+                        else:
+                            print("[Estado] RESTING -> IDLE (descanso completado, usuario activo)")
 
 
 def main():

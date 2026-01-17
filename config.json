@@ -1,7 +1,7 @@
 {
-  "work_minutes": 25,
-  "rest_minutes": 10,
+  "work_minutes": 10,
+  "rest_minutes": 1,
   "auto_rest_minutes": 1,
-  "msg_rest": "Decansa p tontito",
-  "msg_work": "Ponte a chambear"
+  "msg_rest": "A descansar pe recontra taradaso",
+  "msg_work": "Comienza a ganarte el sueldo oe tontin"
 }
